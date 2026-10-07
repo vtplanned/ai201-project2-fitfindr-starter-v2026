@@ -13,7 +13,9 @@ Build and test your three tools in `tools.py` first. Then come here.
     python agent.py          runs both example paths below
 """
 
-import config
+import re
+
+import config  # noqa: F401
 import trace
 from tools import search_listings, suggest_outfit, create_fit_card
 from generate import ModelUnavailable
@@ -44,6 +46,7 @@ def new_session(query: str, wardrobe: dict) -> dict:
         "outfit_suggestion": None,   # what suggest_outfit returned
         "fit_card": None,            # what create_fit_card returned
         "error": None,               # set when the run ended early
+        "tool_calls": [],            # every tool run, in order, with what went in
     }
 
 
@@ -107,9 +110,155 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     """
     session = new_session(query, wardrobe)
 
-    # TODO: delete these two lines and build the loop.
-    session["error"] = "The planning loop isn't built yet — see the TODO in agent.py."
-    return session
+    count = 0
+    while True:
+        count += 1
+        trace.check_iterations(count)
+
+        step = _next_step(session)
+
+        if step == "parse":
+            session["parsed"] = parse_query(query)
+
+        elif step == "search":
+            parsed = session["parsed"]
+            session["search_results"] = search_listings(
+                parsed["description"], parsed["size"], parsed["max_price"]
+            )
+            _record(session, "search_listings", dict(parsed),
+                    f"{len(session['search_results'])} results")
+
+        elif step == "stop_empty":
+            # THE BRANCH: nothing came back, so there is nothing to style.
+            session["error"] = _no_results_message(session["parsed"])
+            return session
+
+        elif step == "select":
+            session["selected_item"] = session["search_results"][0]
+
+        elif step == "suggest":
+            item = session["selected_item"]
+            session["outfit_suggestion"] = suggest_outfit(item, session["wardrobe"])
+            _record(session, "suggest_outfit",
+                    {"new_item": item["id"],
+                     "wardrobe_items": len(session["wardrobe"].get("items") or [])},
+                    session["outfit_suggestion"])
+
+        elif step == "fit_card":
+            item = session["selected_item"]
+            session["fit_card"] = create_fit_card(session["outfit_suggestion"], item)
+            _record(session, "create_fit_card", {"new_item": item["id"]},
+                    session["fit_card"])
+
+        else:  # "done"
+            return session
+
+
+def _next_step(session: dict) -> str:
+    """
+    Look at what the session holds so far and pick the next step. This is the
+    planning part: every decision is made from the last result, not from a
+    fixed list.
+    """
+    if not session["parsed"]:
+        return "parse"
+    if not any(c["tool"] == "search_listings" for c in session["tool_calls"]):
+        return "search"
+    if not session["search_results"]:
+        return "stop_empty"
+    if session["selected_item"] is None:
+        return "select"
+    if session["outfit_suggestion"] is None:
+        return "suggest"
+    if session["fit_card"] is None:
+        return "fit_card"
+    return "done"
+
+
+def _record(session: dict, tool: str, inputs: dict, returned) -> None:
+    """Log a tool call in the session, so a test can see what each tool got."""
+    session["tool_calls"].append({"tool": tool, "inputs": inputs, "returned": returned})
+
+
+# ── query parsing (regex) ─────────────────────────────────────────────────────
+
+_PRICE = re.compile(
+    r"(?:under|below|less than|max(?:imum)?|up to|<=?|for)\s*\$\s*(\d+(?:\.\d+)?)"
+    r"|(?:under|below|less than|up to)\s*(\d+(?:\.\d+)?)\s*(?:dollars|bucks)?"
+    r"|\$\s*(\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+_SIZE = re.compile(
+    r"\b(?:in\s+)?(?:a\s+)?size\s+((?:us\s*)?[a-z0-9./]+)",
+    re.IGNORECASE,
+)
+_FILLER = re.compile(
+    r"^\s*(?:i'?m\s+|i\s+am\s+)?(?:looking\s+for|searching\s+for|find\s+me|i\s+want|i\s+need|show\s+me)\s+",
+    re.IGNORECASE,
+)
+
+
+def parse_query(query: str) -> dict:
+    """
+    Pull a description, a size and a max price out of plain language with
+    regex. "vintage graphic tee under $30, size M" →
+    {"description": "vintage graphic tee", "size": "M", "max_price": 30.0}.
+    size and max_price are None when the query doesn't give one.
+    """
+    text = query
+
+    max_price = None
+    price_match = _PRICE.search(text)
+    if price_match:
+        max_price = float(next(g for g in price_match.groups() if g))
+        text = text[:price_match.start()] + " " + text[price_match.end():]
+
+    size = None
+    size_match = _SIZE.search(text)
+    if size_match:
+        size = size_match.group(1).strip(" .,")
+        text = text[:size_match.start()] + " " + text[size_match.end():]
+
+    text = _FILLER.sub("", text)
+    description = " ".join(re.sub(r"[,;]", " ", text).split())
+
+    return {"description": description, "size": size, "max_price": max_price}
+
+
+def _no_results_message(parsed: dict) -> str:
+    """
+    Say what to change, not just "no results". Re-runs the search with each
+    filter dropped to find out which one emptied it.
+    """
+    desc, size, price = parsed["description"], parsed["size"], parsed["max_price"]
+
+    asked = f"'{desc}'"
+    if size:
+        asked += f" in size {size}"
+    if price is not None:
+        asked += f" under ${price:g}"
+
+    message = f"No listings matched {asked}."
+
+    if not search_listings(desc):
+        return (
+            f"{message} Nothing in the listings matches the words '{desc}' at "
+            f"any size or price — try different words for the item, like the "
+            f"kind of piece (tee, jacket, jeans, boots) or a style "
+            f"(vintage, 90s, y2k, streetwear)."
+        )
+
+    hints = []
+    if price is not None and search_listings(desc, size, None):
+        cheapest = min(l["price"] for l in search_listings(desc, size, None))
+        hints.append(f"raise your max price — the cheapest match is ${cheapest:g}")
+    if size and search_listings(desc, None, price):
+        sizes = sorted({l["size"] for l in search_listings(desc, None, price)})
+        hints.append(f"try another size — matches come in {', '.join(sizes[:5])}")
+    if not hints:
+        hints.append("drop the size or the price limit — together they rule out every match")
+
+    return f"{message} To find something, {' or '.join(hints)}."
 
 
 # ── running it directly ───────────────────────────────────────────────────────
