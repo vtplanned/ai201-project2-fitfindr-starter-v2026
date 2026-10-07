@@ -25,9 +25,9 @@ Given a query that matches at least one listing, the agent completes all three
 tool calls and returns a fit card — in at least 4 of 5 tries.
 
 **Why this target:**
-<!-- Why 4 of 5 and not 5 of 5? Something about your search, probably —
-     "my search is a plain keyword match and some phrasings will miss" is a
-     real answer. -->
+
+4 of 5 because search is plain keyword overlap with no synonyms, so "t-shirt"
+won't find a listing titled "tee" and some phrasings will miss.
 
 ---
 
@@ -37,66 +37,89 @@ Given a query that matches no listings, the agent stops before calling
 `suggest_outfit` and returns a message naming what to change — 5 of 5 tries.
 
 **Why this target:**
-<!-- Why is 5 of 5 reasonable here when criterion 1 isn't? What's different
-     about this path? -->
+
+5 of 5 because that path is an if on an empty list with zero model calls;
+nothing can vary, so a miss would be a real bug.
 
 ---
 
-## 3. Something about state
+## 3. The item search found is the item suggest_outfit received
 
-<!-- YOU WRITE THIS ONE.
+Given the query `'platform sneakers size 8'` run with the example wardrobe, the
+id in `session["selected_item"]` equals the id logged for the `suggest_outfit`
+call in `session["tool_calls"]` — in 5 of 5 tries.
 
-     How would you know that the item your search found is the same item the
-     next tool received? Name something countable or observable.
+One try = one run of `run_agent(query, get_example_wardrobe())`, checked with:
 
-     This is the criterion people find hardest, because state failure doesn't
-     look like state failure — it looks like a tool problem. Something that
-     compares session["selected_item"] against what actually reached
-     suggest_outfit is the shape you're after. -->
-
-
+    python -c "from agent import run_agent; from utils.data_loader import get_example_wardrobe; s = run_agent('platform sneakers size 8', get_example_wardrobe()); print(s['selected_item']['id'], s['tool_calls'][1]['inputs']['new_item'])"
 
 **Why this target:**
 
-
+Everything between the search and `suggest_outfit` is plain Python — the loop
+takes `search_results[0]`, stores it in `session["selected_item"]`, and reads
+that same key back out for the next call. No model, nothing random, and the
+search itself scores the same listings file the same way every run. So the same
+query has to produce the same item every time. A run that came back with a
+different id wouldn't be bad luck, it would mean the session is dropping or
+overwriting state — which is exactly the failure this criterion exists to
+catch, so 4 of 5 would be letting a real bug pass.
 
 ---
 
-## 4. Something about the fit card
+## 4. The fit card names the price and the platform
 
-<!-- YOU WRITE THIS ONE.
+Running the query `'platform sneakers size 8'` five times with the cache off,
+5 of 5 fit cards contain both `$48` and the word `poshmark` (case doesn't
+matter).
 
-     The fit card calls a model, so the same input can produce different words
-     each time. That's not a bug — it's the nature of the tool. So what would
-     make it acceptable?
+One try = one run of:
 
-     Think about what you'd actually be unhappy to see. A caption that never
-     mentions the price? Two different items producing the same opening
-     sentence? A card longer than a caption anyone would post? Any of those can
-     be turned into a number. -->
-
-
+    AI201_CACHE=0 python -c "from agent import run_agent; from utils.data_loader import get_example_wardrobe; s = run_agent('platform sneakers size 8', get_example_wardrobe()); i = s['selected_item']; print('NEEDS:', '\$' + format(i['price'], '.0f'), i['platform']); print('CARD:', s['fit_card'])"
 
 **Why this target:**
 
-
+Unlike criterion 3, this one can vary: `TEMPERATURE = 0.9` in config.py means
+the model rewrites the caption from scratch every run, and the cache is off so
+all five are real calls. I still set 5 of 5 because the prompt in
+`create_fit_card` names the price and the platform explicitly, and a caption
+that leaves out either one fails at the only job it has — telling someone where
+to buy the thing and what it costs. A caption I'd have to edit before posting
+is a caption the tool didn't finish, so I'd rather miss this target in unit 4
+and have something concrete to fix than set it where I can't fail.
 
 ---
 
-## 5. Your choice
+## 5. An empty wardrobe produces advice without inventing a closet
 
-<!-- YOU WRITE THIS ONE TOO.
+Running `'denim jacket under $50'` with `--empty-wardrobe` five times with the
+cache off, 5 of 5 runs return a non-empty fit card, and none of the five outfit
+suggestions contains any of these five item names from `example_wardrobe` in
+`data/wardrobe_schema.json` (case doesn't matter):
 
-     Pick something you actually care about getting right. Speed, the empty
-     wardrobe path, what happens when the model can't be reached, whether the
-     search respects a price ceiling — anything, as long as it names a number
-     or an observable outcome. -->
+- "Baggy straight-leg jeans, dark wash"
+- "Oversized grey crewneck sweatshirt"
+- "Black cropped zip hoodie"
+- "Vintage black denim jacket"
+- "Wide-leg khaki trousers"
 
+One try = one run of:
 
+    AI201_CACHE=0 python app.py ask 'denim jacket under $50' --empty-wardrobe
 
 **Why this target:**
 
-
+The `if not items:` branch in `suggest_outfit` sends the model only the listing
+and a request for outfits built from common basics — the wardrobe item names
+never enter the prompt, and `_STYLIST` tells it never to invent pieces the user
+didn't list. I count only these five of the ten names because the other five
+("Black combat boots", "Chunky white sneakers", "White ribbed tank top",
+"Brown leather belt", "Black crossbody bag") are ordinary basics a stylist
+would suggest unprompted, so finding one would prove nothing. These five stack
+two or three modifiers with a specific wash or color, so the model producing
+one would mean the example wardrobe reached a prompt that should never have
+had it. That makes 5 of 5 honest for the same reason as criterion 3 rather
+than criterion 4: a failure here isn't the model varying its wording, it's the
+wrong data reaching the prompt.
 
 ---
 
