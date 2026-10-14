@@ -123,7 +123,15 @@ def _normalize(word: str) -> str:
     return word
 
 
+# "t-shirt" tokenizes as "t" + "shirt", which scores against listings titled
+# "Shirt" and misses every one titled "Tee" — the exact gap criterion 1's
+# target allows for. Folding the phrase onto "tee" before tokenizing closes it
+# for both the query and the listing text.
+_TSHIRT = re.compile(r"\bt[\s-]?shirts?\b", re.IGNORECASE)
+
+
 def _words(text: str) -> list[str]:
+    text = _TSHIRT.sub("tee", text)
     return [_normalize(w) for w in re.findall(r"[a-z0-9]+", text.lower())]
 
 
