@@ -313,24 +313,18 @@ None of the five distinctive wardrobe names appear in any of the five tries.
 
 **Diagnoses**
 
-No misses — all five criteria came back at or above target. Before calling
-that clean, though, I checked whether criterion 1's scenario actually
-exercises the risk its own reason names: a keyword-overlap search with no
-synonyms. It doesn't. The scenario runs the identical query
-`'vintage graphic tee under $30'` five times, and `search_listings` is pure,
-deterministic Python with no model call in it — five identical inputs can
-only ever produce five identical outcomes. 5 of 5 here proves the same string
-hashes the same way five times; it says nothing about whether the search
-survives a different phrasing of the same request, which is the actual thing
-the 4-of-5 target was written to allow for.
-
-So I tested that risk directly, outside the formal run:
-`search_listings('t-shirt')` returned **zero** of the three listings titled
-with "Tee" (`data/listings.json`), because `"t-shirt"` tokenizes into `"t"`
-and `"shirt"` in `tools.py::_words`, which scores against Shirt-titled
-listings and nothing else. That's a real, 100%-reproducible miss sitting
-behind a criterion that can't see it, because the one scenario testing it
-never varies its wording.
+Criterion 1 ran `'vintage graphic tee under $30'` five times and passed 5/5,
+but that result only shows the agent is consistent, not that it's correct —
+every try sent the exact same query through a tool with zero randomness, so
+five passes and one pass are the same evidence. Checking `search_listings`
+directly with a different phrasing exposed the gap the repeated-query test
+couldn't: `search_listings('t-shirt')` returned none of the three "Tee"
+listings while `search_listings('tee')` returned all three, because the
+hyphen in "t-shirt" splits it into the tokens `"t"` and `"shirt"`, which only
+scores against titles containing "Shirt." The run log's 5/5 was real, but it
+was testing the same input five times rather than testing five different
+inputs once each — a passing score that happened to miss the actual failure
+mode.
 
 **Target I'd tighten:** criterion 1's scenario, not its number. Testing the
 same query five times can't distinguish "the search handles paraphrasing" from
@@ -414,19 +408,17 @@ what the milestone said should happen when the move is done right.
 
 **What I changed:**
 
-In `tools.py::_words`, every piece of text (both the query and the listing
-text) is now run through `_TSHIRT.sub("tee", text)` before tokenizing — a
-regex that folds `"t-shirt"`, `"t shirt"`, `"tshirt"`, and their plurals onto
-`"tee"`. Before this, `"t-shirt"` tokenized into `"t"` and `"shirt"`, which
-only ever scored against listings with "Shirt" in the title.
+Since the bug is that "t-shirt" tokenizes away from "tee" instead of toward
+it, the fix folds t-shirt, tshirt, and t shirt onto tee before the description
+is tokenized (`tools.py::_words`), so a query using any of those phrasings
+scores against the same listings a plain "tee" query would.
 
 **Which failure it was meant to fix:**
 
-The gap named in criterion 1's own "why" and confirmed directly, outside the
-formal run log: `search_listings('t-shirt')` returned none of the three
-Tee-titled listings beforehand. It's the same failure mode the criterion was
-written around, just never caught by the scenario that tests it — see the
-diagnosis above.
+The tokenization gap found in the diagnosis above — `search_listings('t-shirt')`
+matched none of the three Tee-titled listings beforehand, because the hyphen
+split it into `"t"` and `"shirt"` instead of something that scores against
+"Tee."
 
 ### Run Log — After
 
