@@ -17,7 +17,8 @@ import re
 
 import config  # noqa: F401
 import trace
-from tools import search_listings, suggest_outfit, create_fit_card
+from mcp_client import call_tool
+from tools import suggest_outfit, create_fit_card
 from generate import ModelUnavailable
 
 
@@ -119,36 +120,59 @@ def run_agent(query: str, wardrobe: dict) -> dict:
 
         if step == "parse":
             session["parsed"] = parse_query(query)
+            trace.step("parse_query", inputs=query, returned=session["parsed"])
 
         elif step == "search":
             parsed = session["parsed"]
-            session["search_results"] = search_listings(
-                parsed["description"], parsed["size"], parsed["max_price"]
-            )
+            session["search_results"] = call_tool("search_listings", {
+                "description": parsed["description"],
+                "size": parsed["size"],
+                "max_price": parsed["max_price"],
+            })
             _record(session, "search_listings", dict(parsed),
                     f"{len(session['search_results'])} results")
+            trace.step("search_listings (via MCP)", inputs=dict(parsed),
+                       returned=session["search_results"])
 
         elif step == "stop_empty":
             # THE BRANCH: nothing came back, so there is nothing to style.
             session["error"] = _no_results_message(session["parsed"])
+            trace.step("stop_empty", note=f"branch: empty, stopping — {session['error']}")
             return session
 
         elif step == "select":
             session["selected_item"] = session["search_results"][0]
+            trace.step("select", returned=session["selected_item"])
 
         elif step == "suggest":
             item = session["selected_item"]
-            session["outfit_suggestion"] = suggest_outfit(item, session["wardrobe"])
+            try:
+                session["outfit_suggestion"] = suggest_outfit(item, session["wardrobe"])
+            except ModelUnavailable as exc:
+                session["error"] = f"Couldn't reach the styling model: {exc}"
+                trace.step("suggest_outfit", note=f"branch: model unavailable — {exc}")
+                return session
             _record(session, "suggest_outfit",
                     {"new_item": item["id"],
                      "wardrobe_items": len(session["wardrobe"].get("items") or [])},
                     session["outfit_suggestion"])
+            trace.step("suggest_outfit",
+                       inputs={"new_item": item["id"],
+                               "wardrobe_items": len(session["wardrobe"].get("items") or [])},
+                       returned=session["outfit_suggestion"])
 
         elif step == "fit_card":
             item = session["selected_item"]
-            session["fit_card"] = create_fit_card(session["outfit_suggestion"], item)
+            try:
+                session["fit_card"] = create_fit_card(session["outfit_suggestion"], item)
+            except ModelUnavailable as exc:
+                session["error"] = f"Couldn't reach the caption model: {exc}"
+                trace.step("create_fit_card", note=f"branch: model unavailable — {exc}")
+                return session
             _record(session, "create_fit_card", {"new_item": item["id"]},
                     session["fit_card"])
+            trace.step("create_fit_card", inputs={"new_item": item["id"]},
+                       returned=session["fit_card"])
 
         else:  # "done"
             return session
@@ -240,7 +264,12 @@ def _no_results_message(parsed: dict) -> str:
 
     message = f"No listings matched {asked}."
 
-    if not search_listings(desc):
+    def _search(description, size=None, max_price=None):
+        return call_tool("search_listings", {
+            "description": description, "size": size, "max_price": max_price,
+        })
+
+    if not _search(desc):
         return (
             f"{message} Nothing in the listings matches the words '{desc}' at "
             f"any size or price — try different words for the item, like the "
@@ -249,11 +278,11 @@ def _no_results_message(parsed: dict) -> str:
         )
 
     hints = []
-    if price is not None and search_listings(desc, size, None):
-        cheapest = min(l["price"] for l in search_listings(desc, size, None))
+    if price is not None and _search(desc, size, None):
+        cheapest = min(l["price"] for l in _search(desc, size, None))
         hints.append(f"raise your max price — the cheapest match is ${cheapest:g}")
-    if size and search_listings(desc, None, price):
-        sizes = sorted({l["size"] for l in search_listings(desc, None, price)})
+    if size and _search(desc, None, price):
+        sizes = sorted({l["size"] for l in _search(desc, None, price)})
         hints.append(f"try another size — matches come in {', '.join(sizes[:5])}")
     if not hints:
         hints.append("drop the size or the price limit — together they rule out every match")
