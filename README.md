@@ -199,6 +199,12 @@ Finally found the holy grail of denim with these vintage Levi's 501s and honestl
 - *What came back:* It noted that the listings data stores the platform in lowercase (`poshmark`) but the model writes captions like a real post and capitalizes it (`Poshmark`), so a grader reading my sentence literally would fail every correct card over one capital letter. It also checked that `$48.00` would still count, since it contains `$48`.
 - *What I changed:* I added "(case doesn't matter)" after `poshmark`. I kept my 5 of 5 target even though the model runs at temperature 0.9, and wrote out why: a caption missing the price or platform isn't one I'd post.
 
+**Moment 3 — unit 4, checking whether my "before" run actually proved anything**
+
+- *What I asked for:* After `run_eval.py --label before` came back 5/5 on every criterion, I asked Claude whether a perfect score across the board meant my agent was actually solid, given that criterion 1's own reasoning names a known weakness (keyword search with no synonyms).
+- *What came back:* It pointed out that criterion 1's scenario runs the identical query `'vintage graphic tee under $30'` five times against a deterministic, non-model function — so five identical inputs can only ever produce five identical outputs, regardless of whether the search actually handles paraphrasing. It then ran `search_listings('t-shirt')` directly and showed it returned zero of the three Tee-titled listings, because `"t-shirt"` tokenizes into `"t"` and `"shirt"`.
+- *What I changed:* I added a regex in `tools.py::_words` that folds `t-shirt`/`t shirt`/`tshirt` onto `tee` before tokenizing, confirmed `search_listings('shirt')` still only matches Shirt-titled listings, and wrote up the gap between "my test passed" and "my test tested the thing it claimed to" in the Diagnoses section above.
+
 <!-- ═══════════════════════ UNIT 4 — THE TEST ═══════════════════════
 
      Don't fill these in during unit 3.
@@ -219,18 +225,63 @@ Finally found the holy grail of denim with these vintage Levi's 501s and honestl
 
 | Criterion | Target | Try 1 | Try 2 | Try 3 | Try 4 | Try 5 | Verdict |
 |---|---|---|---|---|---|---|---|
-| 1.  |  |  |  |  |  |  |  |
-| 2.  |  |  |  |  |  |  |  |
-| 3.  |  |  |  |  |  |  |  |
-| 4.  |  |  |  |  |  |  |  |
-| 5.  |  |  |  |  |  |  |  |
+| 1. A matching query completes all three tools | 4 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 2. An impossible query stops before the second tool | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 3. The item search found is the item suggest_outfit received | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 4. The fit card names the price and the platform | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 5. An empty wardrobe produces advice without inventing a closet | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
 
-**Real output from one try**, pasted as text, naming the file and function
-that produced it:
+Full output for all 25 tries is in `results/run_2026-10-13_2352_before.md`
+(`run_eval.py::main`, caching off). One try per criterion, pasted as text:
+
+**Criterion 1** — `agent.py::run_agent('vintage graphic tee under $30', example wardrobe)`, try 1:
 
 ```
+selected_item: Vintage Band Tee — Faded Grey ($19.0, depop)
+outfit: * **Outfit 1:** Vintage Band Tee tucked into Baggy straight-leg jeans, dark wash, worn with Black combat boots and the Black crossbody bag.
+* **Outfit 2:** Vintage Band Tee layered over the White ribbed tank top, paired with Wide-leg khaki trousers, Chunky white sneakers, and the Black cropped zip hoodie worn unzipped on top.
+fit_card: Found this insanely faded grey vintage band tee and knew I had to style it. Got it on Depop for just $19, and honestly, it looks so good layered with the white tank, khaki trousers, and a zip hoodie for that ultimate grunge-meets-casual look. 🖤
+
+#thrifted #depopfinds #vintagestyle
+```
+
+**Criterion 2** — `agent.py::run_agent('designer ballgown size XXS under $5', example wardrobe)`, try 1:
 
 ```
+stopped early: yes — No listings matched 'designer ballgown' in size XXS under $5. Nothing in the listings matches the words 'designer ballgown' at any size or price — try different words for the item, like the kind of piece (tee, jacket, jeans, boots) or a style (vintage, 90s, y2k, streetwear).
+selected_item: (none)
+search_results: 0
+```
+
+**Criterion 3** — `agent.py::run_agent('platform sneakers size 8', example wardrobe)`, run directly five times with the check from `criteria.md`:
+
+```
+$ python -c "from agent import run_agent; from utils.data_loader import get_example_wardrobe; s = run_agent('platform sneakers size 8', get_example_wardrobe()); print('selected_item.id =', s['selected_item']['id']); print('suggest_outfit got new_item =', s['tool_calls'][1]['inputs']['new_item'])"
+
+selected_item.id = lst_019
+suggest_outfit got new_item = lst_019
+```
+
+Ran 5 of 5 times — same output every time.
+
+**Criterion 4** — `tools.py::create_fit_card`, via `agent.py::run_agent('platform sneakers size 8', example wardrobe)`, try 1:
+
+```
+Y'all know I couldn't pass up these chunky white platform sneakers when I spotted them on Poshmark for just $48. I've been living in them with my dark indigo baggy jeans, a ribbed tank, and an oversized black denim jacket for that ultimate off-duty look. 👟✨
+
+#thrifted #streetwear #poshmarkfinds
+```
+
+Contains `$48` and `Poshmark` — checked across all five tries, same result each time.
+
+**Criterion 5** — `tools.py::suggest_outfit`, via `agent.py::run_agent('denim jacket under $50', empty wardrobe)`, try 1:
+
+```
+* **Casual Daytime:** Pair with a white t-shirt tucked into black straight-leg jeans, and white canvas sneakers.
+* **Elevated Casual:** Layer over a black ribbed tank top with a pleated midi skirt and leather ankle boots.
+```
+
+None of the five distinctive wardrobe names appear in any of the five tries.
 
 ---
 
@@ -254,15 +305,39 @@ that produced it:
 
 | # | Criterion | Target | Verdict | How I decided |
 |---|---|---|---|---|
-| 1 |  |  |  |  |
-| 2 |  |  |  |  |
-| 3 |  |  |  |  |
-| 4 |  |  |  |  |
-| 5 |  |  |  |  |
+| 1 | A matching query completes all three tools | 4 of 5 | MET (5/5) | All five tries returned a non-`None` `selected_item`, outfit suggestion, and fit card, with `session["error"]` staying `None` throughout. |
+| 2 | An impossible query stops before the second tool | 5 of 5 | MET (5/5) | All five tries set `session["error"]` after `search_listings` returned `[]`, and `fit_card` stayed `None` — `suggest_outfit` never ran. |
+| 3 | The item search found is the item suggest_outfit received | 5 of 5 | MET (5/5) | Ran the exact check named in the criterion five times; `selected_item["id"]` and `tool_calls[1]["inputs"]["new_item"]` were both `lst_019` every time. |
+| 4 | The fit card names the price and the platform | 5 of 5 | MET (5/5) | All five fit cards contained the literal substrings `$48` and `poshmark` (case-insensitive). |
+| 5 | An empty wardrobe produces advice without inventing a closet | 5 of 5 | MET (5/5) | None of the five outfit suggestions contained any of the five distinctive wardrobe item names, checked by literal substring. |
 
 **Diagnoses**
 
+No misses — all five criteria came back at or above target. Before calling
+that clean, though, I checked whether criterion 1's scenario actually
+exercises the risk its own reason names: a keyword-overlap search with no
+synonyms. It doesn't. The scenario runs the identical query
+`'vintage graphic tee under $30'` five times, and `search_listings` is pure,
+deterministic Python with no model call in it — five identical inputs can
+only ever produce five identical outcomes. 5 of 5 here proves the same string
+hashes the same way five times; it says nothing about whether the search
+survives a different phrasing of the same request, which is the actual thing
+the 4-of-5 target was written to allow for.
 
+So I tested that risk directly, outside the formal run:
+`search_listings('t-shirt')` returned **zero** of the three listings titled
+with "Tee" (`data/listings.json`), because `"t-shirt"` tokenizes into `"t"`
+and `"shirt"` in `tools.py::_words`, which scores against Shirt-titled
+listings and nothing else. That's a real, 100%-reproducible miss sitting
+behind a criterion that can't see it, because the one scenario testing it
+never varies its wording.
+
+**Target I'd tighten:** criterion 1's scenario, not its number. Testing the
+same query five times can't distinguish "the search handles paraphrasing" from
+"the search was never asked to." A scenario that actually probes the 4-of-5
+target would run five different, real phrasings of the same item and budget —
+"tee" vs "t-shirt" vs "graphic tee" — so a miss like this one would show up in
+the run log instead of requiring a separate check to find it.
 
 ---
 
@@ -278,22 +353,53 @@ that produced it:
      the same length, your branch isn't working — and this is the fastest way
      anyone will ever find that out. -->
 
-**Happy path**
+**Happy path** — `python app.py ask 'vintage graphic tee under $30' --trace`
 
 ```
-
+[1] parse_query
+      in:  vintage graphic tee under $30
+      out: dict with keys: description, size, max_price
+[2] search_listings (via MCP)
+      in:  dict with keys: description, size, max_price
+      out: 10 items: Vintage Band Tee — Faded Grey, Graphic Tee — 2003 Tour Bootleg Style, Y2K Baby Tee — Butterfly Print … +7 more
+[3] select
+      out: Vintage Band Tee — Faded Grey ($19.0, depop)
+[4] suggest_outfit
+      in:  dict with keys: new_item, wardrobe_items
+      out: * Pair the Vintage Band Tee with the Baggy straight-leg jeans, dark wash, Black combat boots, and Black crossb…
+[5] create_fit_card
+      in:  dict with keys: new_item
+      out: Found this perfectly faded grey band tee on Depop for just $19 and I'm obsessed. I've been living in it with b…
 ```
 
-**Empty search**
+**Empty search** — `python app.py ask 'designer ballgown size XXS under $5' --trace`
 
 ```
-
+[1] parse_query
+      in:  designer ballgown size XXS under $5
+      out: dict with keys: description, size, max_price
+[2] search_listings (via MCP)
+      in:  dict with keys: description, size, max_price
+      out: [] (empty)
+[3] stop_empty
+      →    branch: empty, stopping — No listings matched 'designer ballgown' in size XXS under $5. Nothing in the listings matches the words 'designer ballgown' at any size or price — try different words for the item, like the kind of piece (tee, jacket, jeans, boots) or a style (vintage, 90s, y2k, streetwear).
 ```
 
-**On the MCP move:** <!-- what changed in your code, and whether anything
-behaved differently afterwards. If the rewire didn't work, say exactly where it
-broke — the error text and the last thing that worked. That earns the point in
-full. -->
+The empty path stops at step 3; the happy path runs all five. That's the
+branch working — the MCP call is step 2 in both, and the loop doesn't reach
+`suggest_outfit` or `create_fit_card` when there's nothing to style.
+
+**On the MCP move:** `search_listings` is the tool I moved — it's the one that
+doesn't call the model, so nothing about its behavior should change based on
+transport. In `mcp_server.py` I registered it with its name, a description
+written for a reader who can't see the code (units on the price, what "size"
+matches, the empty-list case), and the typed inputs straight from my Tool
+Inventory. In `agent.py::run_agent`, the direct `search_listings(...)` call
+became `call_tool("search_listings", {...})`, and the diagnostic re-searches
+inside `_no_results_message` were switched the same way, so every path that
+used to call the tool directly now goes through MCP. The return value didn't
+change shape — same list of listing dicts, same empty-list case — which is
+what the milestone said should happen when the move is done right.
 
 
 
@@ -308,22 +414,55 @@ full. -->
 
 **What I changed:**
 
+In `tools.py::_words`, every piece of text (both the query and the listing
+text) is now run through `_TSHIRT.sub("tee", text)` before tokenizing — a
+regex that folds `"t-shirt"`, `"t shirt"`, `"tshirt"`, and their plurals onto
+`"tee"`. Before this, `"t-shirt"` tokenized into `"t"` and `"shirt"`, which
+only ever scored against listings with "Shirt" in the title.
+
 **Which failure it was meant to fix:**
+
+The gap named in criterion 1's own "why" and confirmed directly, outside the
+formal run log: `search_listings('t-shirt')` returned none of the three
+Tee-titled listings beforehand. It's the same failure mode the criterion was
+written around, just never caught by the scenario that tests it — see the
+diagnosis above.
 
 ### Run Log — After
 
+Full output for all 25 tries is in `results/run_2026-10-13_2358_after.md`.
+
 | Criterion | Target | Try 1 | Try 2 | Try 3 | Try 4 | Try 5 | Verdict |
 |---|---|---|---|---|---|---|---|
-| 1.  |  |  |  |  |  |  |  |
-| 2.  |  |  |  |  |  |  |  |
-| 3.  |  |  |  |  |  |  |  |
-| 4.  |  |  |  |  |  |  |  |
-| 5.  |  |  |  |  |  |  |  |
+| 1. A matching query completes all three tools | 4 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 2. An impossible query stops before the second tool | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 3. The item search found is the item suggest_outfit received | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 4. The fit card names the price and the platform | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 5. An empty wardrobe produces advice without inventing a closet | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
 
 **Did it help, and how do I know:**
 
-<!-- If it made things worse, say that. Honestly reported, that earns full
-     credit and is more interesting than one that worked. -->
+The five formal criteria were already 5/5 before and after — this change
+wasn't aimed at them, since their scenarios never exercised the gap in the
+first place (that's the whole diagnosis above). What it fixed is the specific,
+reproducible miss I found by testing the risk directly:
+
+```
+$ python -c "from tools import search_listings; print([l['title'] for l in search_listings('t-shirt')])"
+
+Before: []
+After:  ['Y2K Baby Tee — Butterfly Print', 'Vintage Band Tee — Faded Grey', 'Graphic Tee — 2003 Tour Bootleg Style', 'Mesh Long-Sleeve Top — Black', 'Low-Rise Cargo Pants — Khaki']
+```
+
+I checked it didn't cost anything elsewhere: `search_listings('shirt')` still
+returns only the Shirt-titled listings (Polo Shirt, Flannel Shirt, Shacket),
+unchanged — the substitution only fires on `t-shirt`/`t shirt`/`tshirt`, not
+on "shirt" alone. `python test.py` still passes 10/10 after the change.
+
+So: it helped, on the thing it was meant to help with, and it's the kind of
+fix a scenario change alone couldn't have validated — varying the wording in
+criterion 1's test would have *revealed* this miss, but only a code change to
+`tools.py` could fix it.
 
 
 
@@ -331,11 +470,17 @@ full. -->
 
 ## What's Still Broken
 
-<!-- For each criterion still missed: what you'd do, and why you stopped where
-     you did. "I ran out of time" is fine if it's true. Pretending nothing is
-     left is not. -->
-
-
+No criterion missed, before or after. What's still open is the test-design gap
+named in the diagnosis: criterion 1's scenario runs the same query five times,
+so it can't actually detect a phrasing-dependent miss on its own — I only
+found the `t-shirt`/`tee` gap by testing `search_listings` directly, outside
+`run_eval.py`. The fix for *that* item (the criterion I'd tighten) would mean
+changing `scenarios.py` to run five different real phrasings of the same
+item/budget for criterion 1 instead of one repeated query, so a future miss
+like this one shows up in the formal run log instead of requiring a separate
+check to surface it. I didn't do that this unit because the rule here is one
+change, and I'd already used it on the actual code fix in `tools.py` — but it's
+the next thing I'd do before trusting this test suite further.
 
 <!-- ═════════════════════════════════════════════════════════════════════
 
