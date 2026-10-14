@@ -203,7 +203,7 @@ Finally found the holy grail of denim with these vintage Levi's 501s and honestl
 
 - *What I asked for:* After `run_eval.py --label before` came back 5/5 on every criterion, I asked Claude whether a perfect score across the board meant my agent was actually solid, given that criterion 1's own reasoning names a known weakness (keyword search with no synonyms).
 - *What came back:* It pointed out that criterion 1's scenario runs the identical query `'vintage graphic tee under $30'` five times against a deterministic, non-model function — so five identical inputs can only ever produce five identical outputs, regardless of whether the search actually handles paraphrasing. It then ran `search_listings('t-shirt')` directly and showed it returned zero of the three Tee-titled listings, because `"t-shirt"` tokenizes into `"t"` and `"shirt"`.
-- *What I changed:* I added a regex in `tools.py::_words` that folds `t-shirt`/`t shirt`/`tshirt` onto `tee` before tokenizing, confirmed `search_listings('shirt')` still only matches Shirt-titled listings, and wrote up the gap between "my test passed" and "my test tested the thing it claimed to" in the Diagnoses section above.
+- *What I changed:* Claude gave me the raw facts (the scenario reruns one fixed query, and the tokenization behind the miss) without the conclusion, and asked me to connect them myself before writing anything. I wrote the Diagnoses and Improvement reasoning above from that; the regex fix in `tools.py::_words` folds `t-shirt`/`t shirt`/`tshirt` onto `tee` before tokenizing, and I confirmed `search_listings('shirt')` still only matches Shirt-titled listings.
 
 <!-- ═══════════════════════ UNIT 4 — THE TEST ═══════════════════════
 
